@@ -1,4 +1,3 @@
-# db_models.py
 from datetime import datetime
 from sqlalchemy import (
     Column,
@@ -16,8 +15,6 @@ Base = declarative_base()
 class CallSummary(Base):
     """
     Stores one summarised LIC sales call.
-
-    This is what your MCP tool `save_call_summary` writes into.
     """
     __tablename__ = "call_summaries"
 
@@ -33,8 +30,7 @@ class CallSummary(Base):
     interest_score = Column(Integer, nullable=False)     # 0–10
     next_action = Column(String(50))                     # e.g. follow_up, whatsapp_quote
 
-    raw_summary = Column(Text, nullable=False)           # free-form summary text
+    raw_summary = Column(Text, nullable=False)           # natural language summary
 
-    # For ML later – you can fill these when a policy is actually purchased
     purchased = Column(Boolean, default=None)
     purchase_date = Column(DateTime, nullable=True)
