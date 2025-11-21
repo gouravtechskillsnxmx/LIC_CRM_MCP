@@ -17,8 +17,9 @@ init_db()
 mcp = FastMCP("lic-crm-mcp")
 
 
-@mcp.tool()
-def save_call_summary(
+# ---------------- Core implementation functions (plain Python) ---------------- #
+
+def _save_call_summary_impl(
     call_id: str,
     phone_number: str,
     customer_name: Optional[str],
@@ -28,7 +29,10 @@ def save_call_summary(
     raw_summary: str,
 ) -> Dict[str, Any]:
     """
-    Save a structured summary of an LIC sales call into the database.
+    Actual implementation that writes a call summary into the database.
+    This is called both by:
+      - the MCP tool wrapper, and
+      - the /test-save HTTP endpoint.
     """
 
     db = SessionLocal()
@@ -56,11 +60,11 @@ def save_call_summary(
         db.close()
 
 
-@mcp.tool()
-def score_customers(limit: int = 5) -> Dict[str, Any]:
+def _score_customers_impl(limit: int = 5) -> Dict[str, Any]:
     """
-    Return top N customers who look most likely to buy,
-    based on recent call summaries (heuristic).
+    Heuristic scoring implementation:
+    - For each phone_number, compute max(interest_score) and last call timestamp.
+    - Sort by max_interest desc, then last_call desc.
     """
 
     db = SessionLocal()
@@ -105,18 +109,53 @@ def score_customers(limit: int = 5) -> Dict[str, Any]:
         db.close()
 
 
-# --------- Simple HTTP endpoints for testing with curl ---------
+# ---------------- MCP tool wrappers (what FastMCP exposes) ---------------- #
+
+@mcp.tool()
+def save_call_summary(
+    call_id: str,
+    phone_number: str,
+    customer_name: Optional[str],
+    interest_score: int,
+    intent: str,
+    next_action: Optional[str],
+    raw_summary: str,
+) -> Dict[str, Any]:
+    """
+    MCP tool wrapper that delegates to the core implementation.
+    """
+    return _save_call_summary_impl(
+        call_id=call_id,
+        phone_number=phone_number,
+        customer_name=customer_name,
+        interest_score=interest_score,
+        intent=intent,
+        next_action=next_action,
+        raw_summary=raw_summary,
+    )
+
+
+@mcp.tool()
+def score_customers(limit: int = 5) -> Dict[str, Any]:
+    """
+    MCP tool wrapper for scoring customers.
+    """
+    return _score_customers_impl(limit=limit)
+
+
+# ---------------- Simple HTTP endpoints for manual testing ---------------- #
 
 async def health(request: Request):
     return PlainTextResponse("ok")
 
+
 async def test_save_http(request: Request):
     """
-    Simple HTTP POST endpoint to test save_call_summary via curl.
+    Simple HTTP POST endpoint to test saving a call summary via curl.
     Expects JSON body with the same fields as the MCP tool.
     """
     body = await request.json()
-    result = save_call_summary(
+    result = _save_call_summary_impl(
         call_id=body["call_id"],
         phone_number=body["phone_number"],
         customer_name=body.get("customer_name"),
@@ -128,9 +167,10 @@ async def test_save_http(request: Request):
     return JSONResponse(result)
 
 
-# Expose both:
-# - /mcp  -> MCP SSE endpoint (for OpenAI Agents/Realtime)
-# - /health and /test-save -> simple HTTP endpoints (for you)
+# Expose:
+# - /mcp       -> MCP SSE endpoint (for OpenAI Agents/Realtime)
+# - /health    -> health check
+# - /test-save -> simple HTTP JSON endpoint for you to test with curl
 app = Starlette(
     routes=[
         Route("/health", health, methods=["GET"]),
