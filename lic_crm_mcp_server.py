@@ -2,7 +2,9 @@ from typing import Optional, Dict, Any, List
 
 from fastmcp import FastMCP
 from starlette.applications import Starlette
-from starlette.routing import Mount
+from starlette.routing import Mount, Route
+from starlette.requests import Request
+from starlette.responses import JSONResponse, PlainTextResponse
 from sqlalchemy import func, desc
 
 from db_session import SessionLocal, init_db
@@ -27,15 +29,6 @@ def save_call_summary(
 ) -> Dict[str, Any]:
     """
     Save a structured summary of an LIC sales call into the database.
-
-    Parameters:
-      call_id        - Exotel CallSid or your own call ID
-      phone_number   - customer's phone number (string)
-      customer_name  - optional customer name
-      interest_score - integer 0–10 (0 = never buying, 9–10 = very hot lead)
-      intent         - e.g. 'buy_term', 'renew', 'info_only', 'not_interested', 'other'
-      next_action    - e.g. 'follow_up', 'whatsapp_quote', 'no_contact', 'other'
-      raw_summary    - 3–6 sentence natural language summary of the call
     """
 
     db = SessionLocal()
@@ -67,17 +60,11 @@ def save_call_summary(
 def score_customers(limit: int = 5) -> Dict[str, Any]:
     """
     Return top N customers who look most likely to buy,
-    based on recent call summaries.
-
-    Initial heuristic (no ML yet):
-    - For each phone_number, compute max(interest_score) and last call timestamp.
-    - Sort customers by max interest_score (desc), then by last_call (desc).
-    - Return up to `limit` customers.
+    based on recent call summaries (heuristic).
     """
 
     db = SessionLocal()
     try:
-        # Subquery: aggregate per phone_number
         subq = (
             db.query(
                 CallSummary.phone_number.label("phone_number"),
@@ -118,10 +105,36 @@ def score_customers(limit: int = 5) -> Dict[str, Any]:
         db.close()
 
 
-# Expose MCP server via SSE for Realtime/Agents
+# --------- Simple HTTP endpoints for testing with curl ---------
+
+async def health(request: Request):
+    return PlainTextResponse("ok")
+
+async def test_save_http(request: Request):
+    """
+    Simple HTTP POST endpoint to test save_call_summary via curl.
+    Expects JSON body with the same fields as the MCP tool.
+    """
+    body = await request.json()
+    result = save_call_summary(
+        call_id=body["call_id"],
+        phone_number=body["phone_number"],
+        customer_name=body.get("customer_name"),
+        interest_score=body["interest_score"],
+        intent=body["intent"],
+        next_action=body.get("next_action"),
+        raw_summary=body["raw_summary"],
+    )
+    return JSONResponse(result)
+
+
+# Expose both:
+# - /mcp  -> MCP SSE endpoint (for OpenAI Agents/Realtime)
+# - /health and /test-save -> simple HTTP endpoints (for you)
 app = Starlette(
     routes=[
-        # This mounts FastMCP's SSE app at the root path "/"
-        Mount("/", app=mcp.sse_app()),
+        Route("/health", health, methods=["GET"]),
+        Route("/test-save", test_save_http, methods=["POST"]),
+        Mount("/mcp", app=mcp.sse_app()),
     ]
 )
