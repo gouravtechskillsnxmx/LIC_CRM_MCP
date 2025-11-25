@@ -9,6 +9,7 @@ from sqlalchemy import func, desc
 
 from db_session import SessionLocal, init_db
 from db_models import CallSummary
+from datetime import datetime, timezone
 
 # Ensure DB tables exist
 init_db()
@@ -32,7 +33,7 @@ def _save_call_summary_impl(
     Actual implementation that writes a call summary into the database.
     This is called both by:
       - the MCP tool wrapper, and
-      - the /test-save HTTP endpoint.
+      - the /test-save HTTP endpoint (for debug).
     """
 
     db = SessionLocal()
@@ -45,6 +46,8 @@ def _save_call_summary_impl(
             intent=intent,
             next_action=next_action,
             raw_summary=raw_summary,
+            # important for ws_server.py: always stamp when the summary is saved
+            call_timestamp=datetime.now(timezone.utc),
         )
         db.add(cs)
         db.commit()
@@ -123,6 +126,8 @@ def save_call_summary(
 ) -> Dict[str, Any]:
     """
     MCP tool wrapper that delegates to the core implementation.
+
+    This is what ws_server.py should call after the call is summarized.
     """
     return _save_call_summary_impl(
         call_id=call_id,
@@ -155,8 +160,13 @@ async def test_save_http(request: Request):
     Expects JSON body with the same fields as the MCP tool.
     """
     body = await request.json()
+
+    # Append timestamp to base_id so /test-save never collides on call_id
+    base_id = body.get("call_id", "debug_call")
+    call_id = f"{base_id}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+
     result = _save_call_summary_impl(
-        call_id=body["call_id"],
+        call_id=call_id,
         phone_number=body["phone_number"],
         customer_name=body.get("customer_name"),
         interest_score=body["interest_score"],
