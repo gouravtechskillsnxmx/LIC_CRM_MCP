@@ -409,6 +409,33 @@ async def test_save_http(request: Request):
     )
     return JSONResponse(result)
 
+# ---------------- Extra HTTP endpoints for ML training + ranking ---------------- #
+
+async def train_ml_http(request: Request):
+    """
+    HTTP endpoint to trigger ML training (instead of going through MCP client).
+    Just calls the internal _train_promising_calls_model_impl().
+    """
+    result = _train_promising_calls_model_impl()
+    return JSONResponse(result)
+
+
+async def top10_ml_http(request: Request):
+    """
+    HTTP endpoint to get top N promising calls from the trained ML model.
+    Uses _rank_promising_calls_ml_impl(limit=10) by default.
+    """
+    # Optional query param ?limit=...
+    try:
+        params = dict(request.query_params)
+        limit = int(params.get("limit", 10))
+    except Exception:
+        limit = 10
+
+    result = _rank_promising_calls_ml_impl(limit=limit)
+    return JSONResponse(result)
+
+
 
 # Expose:
 # - /mcp       -> MCP SSE endpoint (for OpenAI Agents/Realtime)
@@ -418,6 +445,8 @@ app = Starlette(
     routes=[
         Route("/health", health, methods=["GET"]),
         Route("/test-save", test_save_http, methods=["POST"]),
+        Route("/train-ml", train_ml_http, methods=["POST"]),   # NEW
+        Route("/top10-ml", top10_ml_http, methods=["GET"]),    # NEW
         Mount("/mcp", app=mcp.sse_app()),
     ]
 )
